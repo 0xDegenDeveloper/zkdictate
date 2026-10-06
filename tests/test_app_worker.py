@@ -73,10 +73,32 @@ class AppWorkerTests(unittest.TestCase):
             self.assertEqual(engine(),0)
         messages=[json.loads(line) for line in stdout.getvalue().splitlines()]
         self.assertEqual([m['event'] for m in messages],['loading','ready','transcript','transcript'])
+        self.assertEqual([(m['text'],m['warnings']) for m in messages[2:]],[('spoken text',[])]*2)
         holder.ModelHolder.get_model.assert_called_once_with('/cached/model', 'float16')
         self.assertEqual(len(set(identities)),1)
         self.assertNotIn('library progress',stdout.getvalue())
         self.assertNotIn('spoken text',stderr.getvalue())
+
+    def test_request_processors_rewrite_transcript_or_warn(self):
+        core=types.ModuleType('mlx.core');core.float16='float16';core.eval=lambda _:None
+        mlx=types.ModuleType('mlx');mlx.core=core
+        whisper=types.ModuleType('mlx_whisper');whisper.transcribe=lambda *_,**__:{'text':' spoken text '}
+        holder=Mock();holder.ModelHolder.get_model.return_value.parameters.return_value=[]
+        audio=base64.b64encode(np.zeros(320,dtype='<f4')).decode()
+        upper={'name':'external_command','path':sys.executable,'args':['-c','import sys;print(sys.stdin.read().upper())']}
+        broken={'name':'external_command','path':sys.executable,'args':['-c','raise SystemExit(2)']}
+        data=''.join(json.dumps({'command':'transcribe','id':str(i),'audio':audio,'processors':steps})+'\n' for i,steps in enumerate([[upper],[broken]])).encode()
+        stdin=types.SimpleNamespace(buffer=io.BytesIO(data));stdout=io.StringIO()
+        with patch('zkdictate.app_worker.model_path', return_value=contextlib.nullcontext('/cached/model')),patch.dict(sys.modules,{'mlx':mlx,'mlx.core':core,'mlx_whisper':whisper}),patch('importlib.import_module',return_value=holder),patch.object(sys,'stdin',stdin),patch.object(sys,'stdout',stdout):
+            self.assertEqual(engine(),0)
+        messages=[json.loads(line) for line in stdout.getvalue().splitlines()][2:]
+        self.assertEqual([(m['text'],m['warnings']) for m in messages],[('SPOKEN TEXT',[]),('spoken text',['External command skipped: exited with status 2.'])])
+
+    def test_bundled_script_loads_processors_beside_it(self):
+        source=Path(__file__).resolve().parents[1]/'src/zkdictate'
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ('app_worker.py','text_processors.py'): (Path(directory)/name).write_bytes((source/name).read_bytes())
+            subprocess.run([sys.executable,'-I',str(Path(directory)/'app_worker.py'),'--help'],cwd='/',check=True,capture_output=True)
 
     def test_guardian_kills_stuck_engine_on_eof_and_termination(self):
         # This dummy engine ignores SIGTERM; guardian must escalate and reap it.

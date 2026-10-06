@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var beepButton: NSButton!
     private var folderButton: NSButton!
     private var fileButton: NSButton!
+    private var processorButtons: [TextProcessor: NSButton] = [:]
+    private var commandLabel: NSTextField!
+    private var commandButton: NSButton!
     private var menuItem: NSStatusItem!
     private var settings = AppSettings()
     private var settingsError: String?
@@ -126,6 +129,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         folderButton = NSButton(title: "Choose Notes Folder…", target: self, action: #selector(chooseFolder))
         fileButton = NSButton(title: "Choose Output File…", target: self, action: #selector(chooseFile))
         updateDestination()
+        for processor in TextProcessor.allCases {
+            let button = NSButton(checkboxWithTitle: processor.title, target: self, action: #selector(changeProcessor))
+            button.state = settings.textProcessors.contains(processor) ? .on : .off; processorButtons[processor] = button
+        }
+        processorButtons[.externalCommand]?.toolTip = "Sends the transcript to the chosen program on standard input and uses its output. If it fails, takes over 5 seconds, or returns nothing, the unchanged transcript is used."
+        commandLabel = NSTextField(wrappingLabelWithString: ""); commandLabel.isSelectable = true; updateCommand()
+        commandButton = NSButton(title: "Choose Command…", target: self, action: #selector(chooseCommand))
         startButton = NSButton(title: "Start Dictation", target: self, action: #selector(toggleStart)); startButton.bezelStyle = .rounded
         statusLabel = NSTextField(wrappingLabelWithString: ""); statusLabel.font = .boldSystemFont(ofSize: 14)
         transcript = NSTextView(); transcript.isEditable = false; transcript.isSelectable = true; transcript.font = .systemFont(ofSize: 16)
@@ -143,14 +153,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let destinationSection = InterfaceSection("Where your words go", views: [
             outputPicker, notesLabel, folderButton, fileButton
         ])
+        let processingSection = InterfaceSection("Text processing", caption: "Optional rewriting after transcription. Changes apply to the next recording.",
+            views: TextProcessor.allCases.compactMap { processorButtons[$0] } + [commandLabel, commandButton])
         let setupSection = InterfaceSection("Setup & permissions", caption: "Model and microphone access. Open when needed.", views: [
             NSTextField(labelWithString: "Transcription model"), modelPicker,
             NSTextField(wrappingLabelWithString: "Downloads once, then works offline. Stop dictation to change it."),
             microphoneRow, accessibilityRow, inputRow
         ], collapsible: true)
-        let stack = NSStackView(views: [title, intro, transcriptSection, recordingSection, destinationSection, setupSection])
+        let stack = NSStackView(views: [title, intro, transcriptSection, recordingSection, destinationSection, processingSection, setupSection])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 24; stack.translatesAutoresizingMaskIntoConstraints = false
-        for section in [transcriptSection, recordingSection, destinationSection, setupSection] {
+        for section in [transcriptSection, recordingSection, destinationSection, processingSection, setupSection] {
             section.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         intro.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -243,7 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var busy: Bool { gate.recording || pendingID != nil || clipboardManager.busy }
     private func updateControls() {
         updateActivity()
-        for control: NSControl in [outputPicker, beepButton, folderButton, fileButton] { control.isEnabled = !busy && pendingAudio == nil && !choosingKey }
+        for control: NSControl in [outputPicker, beepButton, folderButton, fileButton, commandButton] + Array(processorButtons.values) { control.isEnabled = !busy && pendingAudio == nil && !choosingKey }
         finishAndPasteButton.isEnabled = worker == nil && !busy && pendingAudio == nil && !choosingKey
         recordKeyButton.isEnabled = worker == nil && !busy && pendingAudio == nil
         recordKeyButton.title = choosingKey ? "Cancel" : "Record Key…"
@@ -300,6 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         folderButton?.isHidden = settings.outputMode != "note"
         fileButton?.isHidden = settings.outputMode != "file"
         notesLabel.stringValue = settings.outputMode == "file" ? "Output file: \(settings.filePath ?? "Choose a file below")" : "Notes folder: \(settings.notesDirectory)" }
+    private func updateCommand() { commandLabel.stringValue = "Command: \(settings.externalCommandPath ?? "None chosen")" }
     @discardableResult private func persist(_ proposed: AppSettings) -> Bool {
         var saved = false
         do { try proposed.save(); settings = proposed; settingsError = nil; saved = true } catch { show("Could not save settings: \(error.localizedDescription)") }
@@ -308,6 +321,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         modelPicker.selectItem(at: TranscriptionModel.allCases.firstIndex(of: settings.model) ?? 0)
         finishAndPasteButton.state = settings.finishAndPaste ? .on : .off
         beepButton.state = settings.beep ? .on : .off; updateDestination()
+        for (processor, button) in processorButtons { button.state = settings.textProcessors.contains(processor) ? .on : .off }
+        updateCommand()
         return saved
     }
     @objc func changeModel() {
@@ -365,6 +380,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .OK, let url = panel.url, !self.busy else { return }
             var value = self.settings; value.filePath = url.path; self.persist(value)
+        }
+    }
+    @objc func changeProcessor() {
+        guard !busy, pendingAudio == nil else { persist(settings); return }
+        var value = settings; value.textProcessors = TextProcessor.allCases.filter { processorButtons[$0]?.state == .on }
+        if value.textProcessors.contains(.externalCommand) && value.externalCommandPath == nil { chooseCommand(); return }
+        persist(value)
+    }
+    @objc func chooseCommand() {
+        guard !busy, pendingAudio == nil else { return }
+        let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        panel.title = "Choose a program to process transcripts"; panel.prompt = "Use Command"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            guard response == .OK, let url = panel.url, !self.busy, self.pendingAudio == nil else { self.persist(self.settings); return }
+            guard FileManager.default.isExecutableFile(atPath: url.path) else { self.persist(self.settings); self.show("\(url.lastPathComponent) is not executable. Choose a program or script with execute permission."); return }
+            var value = self.settings; value.externalCommandPath = url.path
+            if !value.textProcessors.contains(.externalCommand) { value.textProcessors = TextProcessor.allCases.filter { $0 == .externalCommand || value.textProcessors.contains($0) } }
+            self.persist(value)
         }
     }
     @objc func microphone() {
@@ -426,14 +460,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let id = object["id"] as? String, id == pendingID, let text = object["text"] as? String else { failWorker("Invalid transcription response. Click Retry."); return }
             pendingID = nil; pendingAudio = nil; deadline = nil; gate.ready = true
             let target = outputSnapshot ?? settings; outputSnapshot = nil
+            let note = ((object["warnings"] as? [String]) ?? []).map { " " + $0.prefix(200) }.joined()
             if text.isEmpty { pasteIntent.cancel(); show("No speech detected. Try again.") }
             else {
                 lastText = text; transcript.string = text
                 do {
-                    if target.outputMode == "note" { let url = try NoteOutput.save(text, folder: URL(fileURLWithPath: target.notesDirectory)); show("Saved note: \(url.lastPathComponent)") }
-                    else if target.outputMode == "file", let path = target.filePath { try NoteOutput.append(text, file: URL(fileURLWithPath: path)); show("Appended transcript to \(URL(fileURLWithPath: path).lastPathComponent)") }
-                    else { copyText(text, automaticPaste: true) }
-                } catch { show("Transcript preserved below, but saving failed: \(error.localizedDescription)") }
+                    if target.outputMode == "note" { let url = try NoteOutput.save(text, folder: URL(fileURLWithPath: target.notesDirectory)); show("Saved note: \(url.lastPathComponent)\(note)") }
+                    else if target.outputMode == "file", let path = target.filePath { try NoteOutput.append(text, file: URL(fileURLWithPath: path)); show("Appended transcript to \(URL(fileURLWithPath: path).lastPathComponent)\(note)") }
+                    else { copyText(text, automaticPaste: true, note: note) }
+                } catch { show("Transcript preserved below, but saving failed: \(error.localizedDescription)\(note)") }
             }
         case "error", "fatal": failWorker("Transcription failed: \(object["message"] as? String ?? "Unknown error"). Click Retry.")
         default: failWorker("Unknown transcription response. Click Retry.")
@@ -443,7 +478,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func submit(_ audio: Data) {
         pendingAudio = audio; pendingID = UUID().uuidString; gate.ready = false
         deadline = ProcessInfo.processInfo.systemUptime + 120
-        show(pasteIntent.pending ? "Transcribing… will paste" : "Transcribing…"); worker?.transcribe(audio, id: pendingID!); updateControls()
+        show(pasteIntent.pending ? "Transcribing… will paste" : "Transcribing…"); worker?.transcribe(audio, id: pendingID!, processors: (outputSnapshot ?? settings).processorRequest); updateControls()
     }
     private func failWorker(_ message: String) {
         dictationSession.enabled = false
@@ -505,7 +540,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         window.setFrame(frame, display: true)
     }
-    private func copyText(_ text: String, automaticPaste: Bool = false) {
+    private func copyText(_ text: String, automaticPaste: Bool = false, note: String = "") {
         copyingDictation = automaticPaste
         let session = generation
         clipboardManager.copy(text) { [weak self] result in
@@ -513,28 +548,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.copyingDictation = false
             switch result {
             case .success:
-                if automaticPaste && self.pasteIntent.take() { self.postPaste() }
-                else { self.show("Copied to clipboard. Ready for the next dictation.") }
+                if automaticPaste && self.pasteIntent.take() { self.postPaste(note: note) }
+                else { self.show("Copied to clipboard. Ready for the next dictation.\(note)") }
             case .failure(let error):
                 self.pasteIntent.cancel()
-                self.show("\(error.localizedDescription) Transcript preserved below.")
+                self.show("\(error.localizedDescription) Transcript preserved below.\(note)")
             }
             self.updateControls()
         }
     }
-    private func postPaste() {
+    private func postPaste(note: String = "") {
         guard AXIsProcessTrusted(),
               let source = CGEventSource(stateID: .privateState),
               let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
-            show("Automatic paste unavailable. Transcript copied; press ⌘V to paste."); return
+            show("Automatic paste unavailable. Transcript copied; press ⌘V to paste.\(note)"); return
         }
         for event in [down, up] {
             event.flags = .maskCommand
             event.setIntegerValueField(.eventSourceUserData, value: Self.pasteEventTag)
             event.post(tap: .cgSessionEventTap)
         }
-        show("Paste sent. Ready for the next dictation.")
+        show("Paste sent. Ready for the next dictation.\(note)")
     }
     @objc func copyTranscript() { guard !busy, !lastText.isEmpty else { return }; copyText(lastText) }
     @objc func saveTranscript() {

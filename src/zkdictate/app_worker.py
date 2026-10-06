@@ -12,6 +12,14 @@ import subprocess
 import sys
 import threading
 
+try:
+    from . import text_processors
+except ImportError:
+    # The app runs this file as a script with -I, so load the copy beside it.
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location('text_processors', Path(__file__).with_name('text_processors.py'))
+    text_processors = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(text_processors)
+
 MODELS = {
     'whisper': 'mlx-community/whisper-large-v3-turbo',
     'whisper-8bit': 'mlx-community/whisper-large-v3-turbo-8bit',
@@ -99,7 +107,8 @@ def engine(model_name="whisper-8bit"):
                 try:
                     audio = decode_audio(request.get('audio'))
                     result = mlx_whisper.transcribe(audio, path_or_hf_repo=model_name)
-                    emit({'event': 'transcript', 'id': request_id, 'text': result.get('text', '').strip()})
+                    text, warnings = text_processors.process(result.get('text', '').strip(), request.get('processors'))
+                    emit({'event': 'transcript', 'id': request_id, 'text': text, 'warnings': warnings})
                 except Exception as exc:
                     emit({'event': 'error', 'id': request_id, 'message': str(exc)[:1000]})
         except Exception as exc:
