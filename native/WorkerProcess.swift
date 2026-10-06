@@ -57,11 +57,11 @@ final class WorkerProcess {
             try? errors.fileHandleForReading.close()
         }
     }
-    func transcribe(_ audio: Data, id: String) {
+    func transcribe(_ audio: Data, id: String, processors: [[String: Any]] = []) {
         writer.async { [weak self] in
             guard let self else { return }
             do {
-                var data = try JSONSerialization.data(withJSONObject: ["command": "transcribe", "id": id, "audio": audio.base64EncodedString()])
+                var data = try JSONSerialization.data(withJSONObject: ["command": "transcribe", "id": id, "audio": audio.base64EncodedString(), "processors": processors])
                 data.append(10)
                 try self.input.fileHandleForWriting.write(contentsOf: data)
             } catch {

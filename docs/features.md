@@ -143,6 +143,27 @@ If a new recording produces no text, the previous transcript remains on screen.
 The transcript display has no history and is empty after relaunch. Optional
 clipboard backups can temporarily retain earlier copied transcripts. Files you saved and text you copied are separate from this display.
 
+## Text processing
+
+**Text processing** can rewrite each transcript before it reaches the display and
+your output. Every step is **off by default**. Changes apply to the next recording
+without stopping dictation, but cannot be made while recording, transcribing, or
+waiting to retry.
+
+| Step | What it does |
+| --- | --- |
+| Run external command | Sends the transcript to a program you choose on standard input and uses its standard output, trimmed. |
+
+**Choose Command…** picks the program, which must be executable. It runs directly,
+without a shell. To pass arguments, add them as a list under
+`external_command_args` in `settings.json`. Its standard error is discarded.
+
+A step that fails never loses your words. If the command cannot start, exits with
+an error, takes more than 5 seconds, returns no text, returns more than 1 MB, or
+returns text that is not UTF-8, the transcript from before that step is used and
+the status line names the skipped step. The warning never includes transcript
+text. The command itself receives your words, so choose one you trust.
+
 ## Clipboard backups
 
 Select the **Clipboard** tab and enable **Keep clipboard backups**

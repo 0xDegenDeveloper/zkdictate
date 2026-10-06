@@ -18,6 +18,14 @@ identifier. The app rejects stale callbacks, snapshots output settings for each
 recording, and retains pending audio in memory for retries. Stop or quit discards
 that audio. Native watchdogs cover model loading and transcription timeouts.
 
+Each request may also list text processors, snapshotted from settings with the
+other output choices. `text_processors.py` applies them after transcription in a
+fixed registry order. A failing step is skipped with a content-free warning in the
+transcript response, keeping the text from before it. The external command runs
+without a shell, in its own process group, with a 5 second deadline and 1 MB
+output cap. The app bundle copies this module beside `app_worker.py`, which loads
+it by path because `python -I` omits the script directory from `sys.path`.
+
 New notes use exclusive creation and unique filenames. Append mode preserves the
 existing file. A save failure leaves the transcript available in the interface.
 Audio and transcript content are not diagnostically logged.
