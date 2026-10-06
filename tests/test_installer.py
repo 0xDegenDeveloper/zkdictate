@@ -66,9 +66,15 @@ class InstallerTests(unittest.TestCase):
             (binary / 'dirname').symlink_to('/usr/bin/dirname')
             log = root / 'calls'
             env = dict(os.environ, PATH=str(binary), HOME=str(home), TEST_LOG=str(log), VIRTUAL_ENV='/wrong/project')
+            env.pop('ZKDICTATE_SIGN_IDENTITY', None)
             result = subprocess.run(['/bin/bash', str(root / 'install.sh'), '--no-open'], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(log.read_text().splitlines(), ['sync --locked --python 3.12', 'run --frozen python scripts/build_app.py', 'run --frozen python scripts/install_app.py --no-open'])
+            log.unlink()
+            env['ZKDICTATE_SIGN_IDENTITY'] = 'My Local Signer'
+            result = subprocess.run(['/bin/bash', str(root / 'install.sh'), '--no-open'], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('run --frozen python scripts/build_app.py --identity My Local Signer', log.read_text().splitlines())
 
     def test_setup_installs_missing_uv_without_modifying_shell_profiles(self):
         with tempfile.TemporaryDirectory() as temp:

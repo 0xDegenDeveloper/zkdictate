@@ -59,6 +59,9 @@ or read the complete [feature guide](docs/features.md).
 
 - **Hotkey permission looks enabled but doesn’t work after an update:** remove ZK Dictate
   from Input Monitoring, add `~/Applications/ZK Dictate.app` again, and restart it.
+  Each ad-hoc build has a new identity. To keep permissions across rebuilds, sign
+  with a code-signing certificate from your keychain (a self-signed one works):
+  `ZKDICTATE_SIGN_IDENTITY="ZK Dictate Local" bash install.sh`.
 - **A recording is discarded:** hold the dictation key for at least 1.5 seconds
   without pressing other keys.
 - **Transcription fails:** click **Retry Transcription**. Pending audio is kept in
