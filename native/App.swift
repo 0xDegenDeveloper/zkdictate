@@ -15,7 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var zoomMonitor: Any?
     private var baseFonts: [(NSView, NSFont)] = []
     private var statusLabel: NSTextField!
-    private var permissionLabel: NSTextField!
+    private var microphoneRow: PermissionRow!
+    private var inputRow: PermissionRow!
+    private var accessibilityRow: PermissionRow!
     private var notesLabel: NSTextField!
     private var transcript: NSTextView!
     private var startButton: NSButton!
@@ -98,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         show(settingsError.map { "Settings could not be loaded: \($0). Choose a notes folder to repair them." } ?? "Ready to set up. Click Start Dictation when permissions are allowed.")
         showWindow()
     }
-    func applicationDidBecomeActive(_ notification: Notification) { if permissionLabel != nil { _ = refreshPermissions() } }
+    func applicationDidBecomeActive(_ notification: Notification) { if microphoneRow != nil { _ = refreshPermissions() } }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func windowShouldClose(_ sender: NSWindow) -> Bool { NSApp.terminate(nil); return false }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
@@ -108,9 +110,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.title = "ZK Dictate"; window.minSize = NSSize(width: 620, height: 500); window.center(); window.isReleasedWhenClosed = false; window.delegate = self
         let title = NSTextField(labelWithString: "Dictation"); title.font = .boldSystemFont(ofSize: 24)
         let intro = NSTextField(wrappingLabelWithString: "Hold your dictation key to speak. Release to transcribe locally.")
-        permissionLabel = NSTextField(wrappingLabelWithString: "")
-        let mic = NSButton(title: "Allow Microphone", target: self, action: #selector(microphone))
-        let input = NSButton(title: "Allow Global Hotkey", target: self, action: #selector(inputPermission))
+        microphoneRow = PermissionRow("Microphone", target: self, action: #selector(microphone))
+        inputRow = PermissionRow("Input Monitoring (global hotkey)", target: self, action: #selector(inputPermission))
+        accessibilityRow = PermissionRow("Accessibility (finish and paste)", target: self, action: #selector(accessibilityPermission))
         outputPicker = NSPopUpButton(); outputPicker.addItems(withTitles: ["Copy to clipboard", "Save a new note", "Append to file"])
         outputPicker.selectItem(at: modes.firstIndex(of: settings.outputMode) ?? 0); outputPicker.target = self; outputPicker.action = #selector(changeOutput)
         hotkeyLabel = NSTextField(labelWithString: hotkeyTitle(settings.hotkey))
@@ -156,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let setupSection = InterfaceSection("Setup & permissions", caption: "Model and microphone access. Open when needed.", views: [
             NSTextField(labelWithString: "Transcription model"), modelPicker,
             NSTextField(wrappingLabelWithString: "Downloads once, then works offline. Stop dictation to change it."),
-            permissionLabel, mic, input
+            microphoneRow, accessibilityRow, inputRow
         ], collapsible: true)
         let stack = NSStackView(views: [title, intro, transcriptSection, recordingSection, destinationSection, processingSection, setupSection])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 24; stack.translatesAutoresizingMaskIntoConstraints = false
@@ -360,7 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func changeFinishAndPaste() {
         guard worker == nil, !busy, pendingAudio == nil else { return }
         var value = settings; value.finishAndPaste = finishAndPasteButton.state == .on
-        persist(value)
+        persist(value); _ = refreshPermissions()
     }
     @objc func changeBeep() { var value = settings; value.beep = beepButton.state == .on; persist(value) }
     @objc func chooseFolder() {
@@ -404,12 +406,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in DispatchQueue.main.async { _ = self?.refreshPermissions() } }
         } else { openSettings("Privacy_Microphone") }
     }
-    @objc func inputPermission() { if !CGPreflightListenEventAccess() { _ = CGRequestListenEventAccess() }; openSettings("Privacy_ListenEvent") }
+    @objc func inputPermission() { if !CGPreflightListenEventAccess() { _ = CGRequestListenEventAccess() }; openSettings("Privacy_ListenEvent"); _ = refreshPermissions() }
+    @objc func accessibilityPermission() {
+        if !AXIsProcessTrusted() { _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary) }
+        _ = refreshPermissions()
+    }
     private func openSettings(_ pane: String) { if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") { NSWorkspace.shared.open(url) } }
     @discardableResult private func refreshPermissions() -> Bool {
         let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         let input = CGPreflightListenEventAccess()
-        permissionLabel.stringValue = "Microphone: \(mic ? "Allowed" : "Needs approval") · Input Monitoring: \(input ? "Allowed" : "Needs approval / restart")"
+        microphoneRow.update(granted: mic, hint: "Allow microphone access in System Settings.")
+        inputRow.update(granted: input, hint: "Allow ZK Dictate in Input Monitoring. If you already did, restart ZK Dictate.")
+        accessibilityRow.isHidden = !settings.finishAndPaste
+        accessibilityRow.update(granted: AXIsProcessTrusted(), hint: "Finish and paste needs ZK Dictate allowed in Accessibility.")
         let snapshot: [String: Any] = ["microphone": mic ? "Allowed" : "Needs approval", "input_monitoring": input, "app_path": Bundle.main.bundlePath, "pid": ProcessInfo.processInfo.processIdentifier, "checked_at": ISO8601DateFormatter().string(from: Date())]
         if let data = try? JSONSerialization.data(withJSONObject: snapshot) { try? data.write(to: appCacheDirectory.appendingPathComponent("permissions.json"), options: .atomic) }
         return mic && input
