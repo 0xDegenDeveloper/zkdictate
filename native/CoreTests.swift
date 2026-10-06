@@ -221,6 +221,18 @@ struct NativeTests {
         expect(restored.model == .whisper8bit, "8-bit choice persists")
         let unknown = try AppSettings.fromData(Data("{\"model\":\"removed-model\"}".utf8))
         expect(unknown.model == .whisper8bit, "unknown model falls back to default")
+        expect(defaultClipboard.textProcessors.isEmpty && defaultClipboard.externalCommandPath == nil && defaultClipboard.externalCommandArgs.isEmpty, "text processing defaults off for existing installations")
+        expect(defaultClipboard.processorRequest.isEmpty, "no processors are requested by default")
+        let processing = try AppSettings.fromData(Data("{\"text_processors\":[\"removed\",\"external_command\",\"external_command\"],\"external_command_path\":\"/usr/local/bin/fix\",\"external_command_args\":[\"--mode\",\"x\"]}".utf8))
+        expect(processing.textProcessors == [.externalCommand], "unknown and duplicate processors dropped")
+        let request = processing.processorRequest
+        expect(request.count == 1 && request[0]["name"] as? String == "external_command" && request[0]["path"] as? String == "/usr/local/bin/fix"
+               && request[0]["args"] as? [String] == ["--mode", "x"], "external command request carries path and args")
+        expect(trySettings(processing).textProcessors == [.externalCommand] && trySettings(processing).externalCommandArgs == ["--mode", "x"], "processor settings survive save and load")
+        let relative = try AppSettings.fromData(Data("{\"text_processors\":\"external_command\",\"external_command_path\":\"fix\",\"external_command_args\":[1]}".utf8))
+        expect(relative.textProcessors.isEmpty && relative.externalCommandPath == nil && relative.externalCommandArgs.isEmpty, "malformed processor settings fall back to off")
+        var unchosen = AppSettings(); unchosen.textProcessors = [.externalCommand]
+        expect(unchosen.processorRequest[0]["path"] as? String == "", "missing command is left for the worker to report")
         print("Native hotkey, capture gate, settings, and note output tests passed (no capture APIs linked).")
     }
 }
