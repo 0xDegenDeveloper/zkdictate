@@ -6,6 +6,16 @@ enum TranscriptionModel: String, Codable, CaseIterable {
     var title: String { self == .whisper ? "Whisper Turbo" : "Whisper Turbo (8-bit, Default)" }
 }
 
+/// Worker-side transcript rewriting steps; the worker applies them in its own fixed order.
+enum TextProcessor: String, Codable, CaseIterable {
+    case externalCommand = "external_command"
+    var title: String {
+        switch self {
+        case .externalCommand: return "Run external command"
+        }
+    }
+}
+
 struct AppSettings: Codable {
     var notesDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/ZK Dictate").path
     var outputMode = "clipboard"
@@ -19,7 +29,11 @@ struct AppSettings: Codable {
     var zoomPercent = 100
     var hidePreviewsOnDeactivate = true
     var model = TranscriptionModel.whisper8bit
+    var textProcessors: [TextProcessor] = []
+    var externalCommandPath: String? = nil
+    var externalCommandArgs: [String] = []
     enum CodingKeys: String, CodingKey {
+        case textProcessors = "text_processors", externalCommandPath = "external_command_path", externalCommandArgs = "external_command_args"
         case zoomPercent = "zoom_percent"
         case finishAndPaste = "finish_and_paste"
         case notesDirectory = "notes_directory", outputMode = "output_mode", filePath = "file_path", hotkey, beep, model, clipboardBackups = "clipboard_backups", clipboardMinutes = "clipboard_minutes", sideBySide = "side_by_side", hidePreviewsOnDeactivate = "hide_previews_on_deactivate"
@@ -48,7 +62,19 @@ struct AppSettings: Codable {
         result.finishAndPaste = values["finish_and_paste"] as? Bool ?? false
         result.beep = values["beep"] as? Bool ?? false
         result.model = (values["model"] as? String).flatMap(TranscriptionModel.init(rawValue:)) ?? .whisper8bit
+        let enabled = Set((values["text_processors"] as? [String] ?? []).compactMap(TextProcessor.init(rawValue:)))
+        result.textProcessors = TextProcessor.allCases.filter(enabled.contains)
+        if let path = values["external_command_path"] as? String, path.hasPrefix("/") { result.externalCommandPath = path }
+        result.externalCommandArgs = values["external_command_args"] as? [String] ?? []
         return result
+    }
+    /// Snapshotted into each transcription request so changes apply to the next recording.
+    var processorRequest: [[String: Any]] {
+        textProcessors.map { processor in
+            switch processor {
+            case .externalCommand: return ["name": processor.rawValue, "path": externalCommandPath ?? "", "args": externalCommandArgs]
+            }
+        }
     }
     func save() throws {
         try FileManager.default.createDirectory(at: Self.url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

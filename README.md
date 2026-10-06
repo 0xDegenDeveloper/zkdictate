@@ -99,6 +99,13 @@ never sends Enter. Note/file output modes keep their normal behavior.
 
 To revert the experiment, stop dictation, uncheck the setting, and start again.
 
+### Text processing
+
+Optional steps in **Text processing** rewrite transcripts before output. **Run
+external command** pipes each transcript through a program you choose, without a
+shell. Steps default to off, apply from the next recording, and a failed step
+keeps the unchanged transcript. See the [feature guide](docs/features.md#text-processing).
+
 ### Readability and dictation status
 
 Use **⌘+** (or **⌘=**) and **⌘−** to resize text throughout both panes, and
@@ -111,6 +118,6 @@ and transcribing (mic off), and explicitly marks a queued automatic paste.
 Side-by-side panes share added window width; the latest transcript appears first.
 
 Controls are grouped into spaced sections: **Your words**, **How you record**,
-**Where your words go**, and **Setup & permissions**. Setup and **Backup settings**
+**Where your words go**, **Text processing**, and **Setup & permissions**. Setup and **Backup settings**
 expand on click; both clipboard restore choices remain visible in their own cards.
 Folder/file controls appear only for the selected output mode.
