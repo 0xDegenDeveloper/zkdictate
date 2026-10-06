@@ -30,6 +30,7 @@ fi
 printf '\n[1/3] Preparing Python and dependencies…\n'
 uv sync --locked --python 3.12
 printf '\n[2/3] Building ZK Dictate…\n'
-uv run --frozen python scripts/build_app.py
+# A stable identity keeps macOS permissions across rebuilds; ad-hoc signing changes every build.
+uv run --frozen python scripts/build_app.py ${ZKDICTATE_SIGN_IDENTITY:+--identity "$ZKDICTATE_SIGN_IDENTITY"}
 printf '\n[3/3] Installing the app…\n'
 uv run --frozen python scripts/install_app.py "$@"
